@@ -1,0 +1,13 @@
+[package]
+name = "auto_adb_wl_server"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+tokio = { version = "1.47.1", features = ["full"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
+anyhow = "1.0.99"
+regex = "1.11.1"
+lazy_static = "1.5.0"
+which = "8.0.0"
