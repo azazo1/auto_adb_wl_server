@@ -1,4 +1,4 @@
-use std::{ffi::OsStr, net::SocketAddr, path::PathBuf, process::Output};
+use std::{ffi::OsStr, net::SocketAddr, path::PathBuf, process::{Output, Stdio}};
 
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -8,7 +8,7 @@ use tokio::{
     net::{TcpListener, TcpStream},
     process::Command,
 };
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 const PORT: u16 = 15555;
 
@@ -76,6 +76,7 @@ async fn handle_client(mut client: TcpStream, client_addr: SocketAddr) -> io::Re
         static ref PAT_CONNECT: Regex = Regex::new(r#"^c-(\d+.\d+.\d+.\d+:\d+)$"#).unwrap();
         static ref PAT_DISCONNECT: Regex = Regex::new(r#"^d-(.+)$"#).unwrap();
         static ref PAT_PAIR: Regex = Regex::new(r#"^p-(\d+.\d+.\d+.\d+:\d+)-(\d{6})$"#).unwrap();
+        static ref PAT_OPEN_SCRCPY: Regex = Regex::new(r#"^s-$"#).unwrap();
     }
     let (r, w) = client.split();
     let mut writer = BufWriter::new(w);
@@ -121,6 +122,22 @@ async fn handle_client(mut client: TcpStream, client_addr: SocketAddr) -> io::Re
             } else {
                 info!("Adb pair failed.");
             }
+        } else if let Some(_cap) = PAT_OPEN_SCRCPY.captures(&line) {
+            let Ok(scrcpy) = which::which("scrcpy") else {
+                error!("Scrcpy not found.");
+                continue;
+            };
+            if let Err(e) = Command::new(scrcpy)
+                .arg("-e")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                error!("scrcpy: {e:?}");
+            }
+            info!("Scrcpy called");
+        } else {
+            error!("Unsupported: {line}");
         }
     }
     Ok(())
