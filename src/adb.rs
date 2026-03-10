@@ -33,3 +33,8 @@ pub async fn adb_pair(address: SocketAddr, pair_code: String) -> Result<(), Stri
     call_adb(&["pair", &address.to_string(), &pair_code]).await?;
     Ok(())
 }
+
+pub async fn adb_disconnect(target: &str) -> Result<(), String> {
+    call_adb(&["disconnect", target]).await?;
+    Ok(())
+}

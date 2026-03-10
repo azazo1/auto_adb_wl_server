@@ -1,7 +1,7 @@
 use std::net::SocketAddr;
 
 use auto_adb_wl_server::{
-    adb::{adb_connect, adb_pair},
+    adb::{adb_connect, adb_disconnect, adb_pair},
     mdns::MDnsService,
     scrcpy::{ScrcpyLaunchMode, scrcpy_launch},
 };
@@ -21,6 +21,11 @@ struct AppArgs {
 #[derive(Deserialize)]
 struct AdbConnectArgs {
     address: SocketAddr,
+}
+
+#[derive(Deserialize)]
+struct AdbDisconnectArgs {
+    target: String,
 }
 
 #[derive(Deserialize)]
@@ -56,7 +61,7 @@ async fn handler_adb_pair(
     if let Err(e) = adb_pair(address, pair_code).await {
         warn!(e, "adb pair failed");
         return (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::OK,
             Json(ApiResponse::new(false, e)),
         );
     }
@@ -70,11 +75,22 @@ async fn handler_adb_connect(
     if let Err(e) = adb_connect(address).await {
         warn!(e, "adb connect failed");
         return (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::OK,
             Json(ApiResponse::new(false, e)),
         );
     }
     (StatusCode::OK, Json(ApiResponse::new(true, "connected")))
+}
+
+async fn handler_adb_disconnect(
+    Json(AdbDisconnectArgs { target }): Json<AdbDisconnectArgs>,
+) -> (StatusCode, Json<ApiResponse>) {
+    info!("req: adb disconnect {target}");
+    if let Err(e) = adb_disconnect(&target).await {
+        warn!(e, "adb disconnect failed");
+        return (StatusCode::OK, Json(ApiResponse::new(false, e)));
+    }
+    (StatusCode::OK, Json(ApiResponse::new(true, "disconnected")))
 }
 
 async fn handler_scrcpy_launch(
@@ -84,7 +100,7 @@ async fn handler_scrcpy_launch(
     if let Err(e) = scrcpy_launch(mode).await {
         warn!(e, "scrcpy launch failed");
         return (
-            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::OK,
             Json(ApiResponse::new(false, e)),
         );
     }
@@ -107,6 +123,7 @@ async fn main() -> anyhow::Result<()> {
     info!("bind on port: {}", args.port);
     let app = Router::new()
         .route("/adb/connect", post(handler_adb_connect))
+        .route("/adb/disconnect", post(handler_adb_disconnect))
         .route("/adb/pair", post(handler_adb_pair))
         .route("/scrcpy/launch", post(handler_scrcpy_launch));
     axum::serve(listener, app)
