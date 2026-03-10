@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use mdns_sd::{ServiceDaemon, ServiceInfo};
+use mdns_sd::{IfKind, ServiceDaemon, ServiceInfo};
 use tracing::info;
 
 pub struct MDnsService {
@@ -16,6 +16,9 @@ impl MDnsService {
     pub fn register(port: u16) -> Result<Self, String> {
         let mdns = ServiceDaemon::new()
             .map_err(|e| format!("failed to launch mdns service daemon: {e:?}"))?;
+
+        mdns.disable_interface(IfKind::IPv6).ok();
+
         let service_info = ServiceInfo::new(
             Self::SERVICE_TYPE,
             Self::INSTANCE_NAME,
