@@ -7,7 +7,7 @@ use auto_adb_wl_server::{
 };
 use axum::{Json, Router, http::StatusCode, routing::post};
 use clap::Parser;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
 use tracing::{error, info, warn};
 
@@ -34,37 +34,61 @@ struct ScrcpyLaunchArgs {
     mode: ScrcpyLaunchMode,
 }
 
+#[derive(Serialize)]
+struct ApiResponse {
+    message: String,
+    ok: bool,
+}
+
+impl ApiResponse {
+    fn new(ok: bool, message: impl Into<String>) -> Self {
+        Self {
+            ok,
+            message: message.into(),
+        }
+    }
+}
+
 async fn handler_adb_pair(
     Json(AdbPairArgs { address, pair_code }): Json<AdbPairArgs>,
-) -> (StatusCode, String) {
+) -> (StatusCode, Json<ApiResponse>) {
     info!("req: adb pair {address:?} {pair_code}");
     if let Err(e) = adb_pair(address, pair_code).await {
         warn!(e, "adb pair failed");
-        return (StatusCode::INTERNAL_SERVER_ERROR, e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::new(false, e)),
+        );
     }
-    (StatusCode::OK, "paired".into())
+    (StatusCode::OK, Json(ApiResponse::new(true, "paired")))
 }
 
 async fn handler_adb_connect(
     Json(AdbConnectArgs { address }): Json<AdbConnectArgs>,
-) -> (StatusCode, String) {
+) -> (StatusCode, Json<ApiResponse>) {
     info!("req: adb connect {address:?}");
     if let Err(e) = adb_connect(address).await {
         warn!(e, "adb connect failed");
-        return (StatusCode::INTERNAL_SERVER_ERROR, e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::new(false, e)),
+        );
     }
-    (StatusCode::OK, "connected".into())
+    (StatusCode::OK, Json(ApiResponse::new(true, "connected")))
 }
 
 async fn handler_scrcpy_launch(
     Json(ScrcpyLaunchArgs { mode }): Json<ScrcpyLaunchArgs>,
-) -> (StatusCode, String) {
+) -> (StatusCode, Json<ApiResponse>) {
     info!("req: scrcpy launch ({mode:?})");
     if let Err(e) = scrcpy_launch(mode).await {
         warn!(e, "scrcpy launch failed");
-        return (StatusCode::INTERNAL_SERVER_ERROR, e);
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse::new(false, e)),
+        );
     }
-    (StatusCode::OK, "launched".into())
+    (StatusCode::OK, Json(ApiResponse::new(true, "launched")))
 }
 
 async fn shutdown_signal() {
