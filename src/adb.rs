@@ -1,10 +1,5 @@
-use std::{
-    ffi::OsStr,
-    io,
-    net::{SocketAddr, ToSocketAddrs},
-};
+use std::{ffi::OsStr, net::SocketAddr};
 
-use anyhow::Context;
 use tokio::process::Command;
 
 /// 使用指定的参数调用 adb
