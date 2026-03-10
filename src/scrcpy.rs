@@ -26,7 +26,7 @@ pub async fn scrcpy_launch(mode: ScrcpyLaunchMode) -> Result<(), String> {
             cmd.arg("-s").arg(s);
         }
         ScrcpyLaunchMode::TcpIpConnect(addr) => {
-            cmd.arg("--tcpip").arg(addr.to_string());
+            cmd.arg(format!("--tcpip={addr}"));
         }
     }
     let output = cmd.output().await.map_err(|_| "failed to launch scrcpy")?;
