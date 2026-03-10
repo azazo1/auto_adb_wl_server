@@ -8,10 +8,13 @@ name = "auto_adb_wl_server"
 path = "src/main.rs"
 
 [dependencies]
-tokio = { version = "1.47.1", features = ["full"] }
+tokio = { version = "1.47.1", features = ["full", "net", "process"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["fmt", "env-filter"] }
 anyhow = "1.0.99"
 regex = "1.11.1"
-lazy_static = "1.5.0"
 which = "8.0.0"
+mdns-sd = "0.18.1"
+axum = { version = "0.8.8", features = ["json"] }
+clap = { version = "4.5.60", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive"] }
