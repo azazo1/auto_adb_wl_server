@@ -25,7 +25,7 @@ struct AdbConnectArgs {
 #[derive(Deserialize)]
 struct AdbPairArgs {
     address: SocketAddr,
-    pair_code: i32,
+    pair_code: String,
 }
 
 #[derive(Deserialize)]

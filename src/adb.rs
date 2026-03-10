@@ -34,7 +34,7 @@ pub async fn adb_connect(address: SocketAddr) -> Result<(), String> {
     Ok(())
 }
 
-pub async fn adb_pair(address: SocketAddr, pair_code: i32) -> Result<(), String> {
-    call_adb(&["pair", &address.to_string(), &format!("{:06}", pair_code)]).await?;
+pub async fn adb_pair(address: SocketAddr, pair_code: String) -> Result<(), String> {
+    call_adb(&["pair", &address.to_string(), &pair_code]).await?;
     Ok(())
 }
