@@ -2,13 +2,14 @@ use std::net::SocketAddr;
 
 use auto_adb_wl_server::{
     adb::{adb_connect, adb_pair},
+    mdns::MDnsService,
     scrcpy::{ScrcpyLaunchMode, scrcpy_launch},
 };
 use axum::{Json, Router, http::StatusCode, routing::post};
 use clap::Parser;
 use serde::Deserialize;
 use tokio::net::TcpListener;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 #[derive(clap::Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
@@ -66,17 +67,28 @@ async fn handler_scrcpy_launch(
     (StatusCode::OK, "launched".into())
 }
 
+async fn shutdown_signal() {
+    if let Err(e) = tokio::signal::ctrl_c().await {
+        error!(e = format!("{e:?}"), "failed to receive ctrl-c signal.");
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt().init();
 
     let args = AppArgs::parse();
     let listener = TcpListener::bind(format!("0.0.0.0:{}", args.port)).await?;
+    let mdns = MDnsService::register(args.port).map_err(|e| anyhow::anyhow!("{e}"))?;
     info!("bind on port: {}", args.port);
     let app = Router::new()
         .route("/adb/connect", post(handler_adb_connect))
         .route("/adb/pair", post(handler_adb_pair))
         .route("/scrcpy/launch", post(handler_scrcpy_launch));
-    axum::serve(listener, app).await?;
+    axum::serve(listener, app)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    mdns.unregister().map_err(|e| anyhow::anyhow!("{e}"))?;
+    info!("shutdown");
     Ok(())
 }
