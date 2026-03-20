@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 
+use anyhow::Context;
 use auto_adb_wl_server::{
     adb::{adb_connect, adb_disconnect, adb_pair},
     mdns::MDnsService,
@@ -60,10 +61,7 @@ async fn handler_adb_pair(
     info!("req: adb pair {address:?} {pair_code}");
     if let Err(e) = adb_pair(address, pair_code).await {
         warn!(e, "adb pair failed");
-        return (
-            StatusCode::OK,
-            Json(ApiResponse::new(false, e)),
-        );
+        return (StatusCode::OK, Json(ApiResponse::new(false, e)));
     }
     (StatusCode::OK, Json(ApiResponse::new(true, "paired")))
 }
@@ -74,10 +72,7 @@ async fn handler_adb_connect(
     info!("req: adb connect {address:?}");
     if let Err(e) = adb_connect(address).await {
         warn!(e, "adb connect failed");
-        return (
-            StatusCode::OK,
-            Json(ApiResponse::new(false, e)),
-        );
+        return (StatusCode::OK, Json(ApiResponse::new(false, e)));
     }
     (StatusCode::OK, Json(ApiResponse::new(true, "connected")))
 }
@@ -99,10 +94,7 @@ async fn handler_scrcpy_launch(
     info!("req: scrcpy launch ({mode:?})");
     if let Err(e) = scrcpy_launch(mode).await {
         warn!(e, "scrcpy launch failed");
-        return (
-            StatusCode::OK,
-            Json(ApiResponse::new(false, e)),
-        );
+        return (StatusCode::OK, Json(ApiResponse::new(false, e)));
     }
     (StatusCode::OK, Json(ApiResponse::new(true, "launched")))
 }
@@ -120,6 +112,28 @@ async fn main() -> anyhow::Result<()> {
     let args = AppArgs::parse();
     let listener = TcpListener::bind(format!("0.0.0.0:{}", args.port)).await?;
     let mdns = MDnsService::register(args.port).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mon = netwatch::netmon::Monitor::new()
+        .await
+        .with_context(|| "failed to initialize network monitor")?;
+    let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);
+    tokio::spawn(async move {
+        loop {
+            tokio::select! {
+                _ = shutdown_rx.recv() => {
+                    if let Err(e) = mdns.unregister() {
+                        warn!(?e, "failed to unregister mdns service.");
+                    }
+                    break;
+                }
+                r = mon.network_change() => {
+                    r.unwrap();
+                    if let Err(e) = mdns.restart() {
+                        warn!(?e, "failed to restart mdns service.");
+                    }
+                }
+            }
+        }
+    });
     info!("bind on port: {}", args.port);
     let app = Router::new()
         .route("/adb/connect", post(handler_adb_connect))
@@ -129,7 +143,7 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
-    mdns.unregister().map_err(|e| anyhow::anyhow!("{e}"))?;
+    shutdown_tx.send(()).await.unwrap();
     info!("shutdown");
     Ok(())
 }

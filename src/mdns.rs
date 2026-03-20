@@ -5,7 +5,7 @@ use tracing::info;
 
 pub struct MDnsService {
     mdns: ServiceDaemon,
-    service_fullname: String,
+    service_info: ServiceInfo,
 }
 
 impl MDnsService {
@@ -29,19 +29,23 @@ impl MDnsService {
         )
         .expect("valid service info")
         .enable_addr_auto();
-        let service_fullname = service_info.get_fullname().to_string();
-        mdns.register(service_info)
+        mdns.register(service_info.clone())
             .map_err(|e| format!("failed to register mdns service: {e:?}"))?;
-        Ok(Self {
-            mdns,
-            service_fullname,
-        })
+        Ok(Self { mdns, service_info })
+    }
+
+    pub fn restart(&self) -> Result<(), String> {
+        self.unregister()?;
+        self.mdns
+            .register(self.service_info.clone())
+            .map_err(|e| format!("failed to register mdns service: {e:?}"))?;
+        Ok(())
     }
 
     pub fn unregister(&self) -> Result<(), String> {
         let receiver = self
             .mdns
-            .unregister(&self.service_fullname)
+            .unregister(self.service_info.get_fullname())
             .map_err(|e| format!("failed to unregister: {e:?}"))?;
         while let Ok(event) = receiver.recv() {
             info!("unregister result: {:?}", &event);
