@@ -7,9 +7,11 @@ use std::{
 };
 
 use mdns_sd::{ServiceDaemon, ServiceEvent};
+use tracing::info;
 
 #[tokio::test]
 async fn mdns_discover() {
+    tracing_subscriber::fmt().init();
     let sd = ServiceDaemon::new().unwrap();
     let receiver = sd.browse("_http._tcp.local.").unwrap();
     let found = Arc::new(AtomicBool::new(false));
@@ -18,8 +20,15 @@ async fn mdns_discover() {
         while let Ok(evt) = receiver.recv_async().await {
             #[allow(clippy::single_match)]
             match evt {
+                ServiceEvent::ServiceResolved(resolved_service) => {
+                    info!(
+                        "{}: {:#?}",
+                        resolved_service.fullname,
+                        resolved_service.get_addresses_v4()
+                    );
+                }
                 ServiceEvent::ServiceFound(service_type, fullname) => {
-                    println!("found {service_type} : {fullname}");
+                    info!("found {service_type} : {fullname}");
                     if fullname.to_lowercase().contains("auto adb") {
                         found_cloned.store(true, Ordering::Relaxed);
                     }

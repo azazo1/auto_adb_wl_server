@@ -1,6 +1,5 @@
-use std::{net::SocketAddr, time::Duration};
+use std::net::SocketAddr;
 
-use anyhow::Context;
 use auto_adb_wl_server::{
     adb::{adb_connect, adb_disconnect, adb_pair},
     mdns::MDnsService,
@@ -112,12 +111,13 @@ async fn main() -> anyhow::Result<()> {
     let args = AppArgs::parse();
     let listener = TcpListener::bind(format!("0.0.0.0:{}", args.port)).await?;
     let mut mdns = MDnsService::register(args.port).map_err(|e| anyhow::anyhow!("{e}"))?;
+    info!("mdns service started: {}", mdns.fullname());
 
     let _handle = netwatcher::watch_interfaces(move |_update| {
         if let Err(e) = mdns.restart() {
             warn!(e);
         } else {
-            info!("mdns service restarted");
+            info!("mdns service restarted: {}", mdns.fullname());
         }
     })
     .unwrap();

@@ -34,6 +34,10 @@ impl MDnsService {
         Ok(Self { mdns, service_info })
     }
 
+    pub fn fullname(&self) -> &str {
+        self.service_info.get_fullname()
+    }
+
     pub fn restart(&mut self) -> Result<(), String> {
         self.unregister()?;
         self.mdns.shutdown().map_err(|e| format!("{e}"))?;
