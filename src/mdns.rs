@@ -18,6 +18,8 @@ impl MDnsService {
             .map_err(|e| format!("failed to launch mdns service daemon: {e:?}"))?;
 
         mdns.disable_interface(IfKind::IPv6).ok();
+        mdns.disable_interface(IfKind::LoopbackV6).ok();
+        mdns.disable_interface(IfKind::LoopbackV4).ok();
 
         let service_info = ServiceInfo::new(
             Self::SERVICE_TYPE,
