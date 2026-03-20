@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use mdns_sd::{IfKind, ServiceDaemon, ServiceInfo};
-use tracing::info;
+use tracing::{error, info};
 
 pub struct MDnsService {
     mdns: ServiceDaemon,
@@ -34,8 +34,10 @@ impl MDnsService {
         Ok(Self { mdns, service_info })
     }
 
-    pub fn restart(&self) -> Result<(), String> {
+    pub fn restart(&mut self) -> Result<(), String> {
         self.unregister()?;
+        self.mdns.shutdown().map_err(|e| format!("{e}"))?;
+        self.mdns = ServiceDaemon::new().map_err(|e| format!("{e}"))?;
         self.mdns
             .register(self.service_info.clone())
             .map_err(|e| format!("failed to register mdns service: {e:?}"))?;
@@ -52,5 +54,13 @@ impl MDnsService {
         }
 
         Ok(())
+    }
+}
+
+impl Drop for MDnsService {
+    fn drop(&mut self) {
+        if let Err(e) = self.unregister() {
+            error!(e);
+        }
     }
 }

@@ -1,4 +1,4 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, time::Duration};
 
 use anyhow::Context;
 use auto_adb_wl_server::{
@@ -111,29 +111,17 @@ async fn main() -> anyhow::Result<()> {
 
     let args = AppArgs::parse();
     let listener = TcpListener::bind(format!("0.0.0.0:{}", args.port)).await?;
-    let mdns = MDnsService::register(args.port).map_err(|e| anyhow::anyhow!("{e}"))?;
-    let mon = netwatch::netmon::Monitor::new()
-        .await
-        .with_context(|| "failed to initialize network monitor")?;
-    let (shutdown_tx, mut shutdown_rx) = tokio::sync::mpsc::channel(1);
-    tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                _ = shutdown_rx.recv() => {
-                    if let Err(e) = mdns.unregister() {
-                        warn!(?e, "failed to unregister mdns service.");
-                    }
-                    break;
-                }
-                r = mon.network_change() => {
-                    r.unwrap();
-                    if let Err(e) = mdns.restart() {
-                        warn!(?e, "failed to restart mdns service.");
-                    }
-                }
-            }
+    let mut mdns = MDnsService::register(args.port).map_err(|e| anyhow::anyhow!("{e}"))?;
+
+    let _handle = netwatcher::watch_interfaces(move |_update| {
+        if let Err(e) = mdns.restart() {
+            warn!(e);
+        } else {
+            info!("mdns service restarted");
         }
-    });
+    })
+    .unwrap();
+
     info!("bind on port: {}", args.port);
     let app = Router::new()
         .route("/adb/connect", post(handler_adb_connect))
@@ -143,7 +131,6 @@ async fn main() -> anyhow::Result<()> {
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
-    shutdown_tx.send(()).await.unwrap();
     info!("shutdown");
     Ok(())
 }
