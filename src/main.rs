@@ -1,11 +1,15 @@
-use std::net::SocketAddr;
+use std::{
+    collections::HashMap,
+    net::{IpAddr, SocketAddr},
+    sync::{Arc, Mutex},
+};
 
 use auto_adb_wl_server::{
     adb::{adb_connect, adb_disconnect, adb_pair},
     mdns::MDnsService,
-    scrcpy::{ScrcpyLaunchMode, scrcpy_launch},
+    scrcpy::{ScrcpyLaunchMode, ScrcpySuperviseStopTx, connection_ip_from_target, scrcpy_launch},
 };
-use axum::{Json, Router, http::StatusCode, routing::post};
+use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
 use clap::Parser;
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
@@ -45,11 +49,52 @@ struct ApiResponse {
     ok: bool,
 }
 
+#[derive(Clone, Default)]
+struct AppState {
+    scrcpy_supervisors: Arc<Mutex<HashMap<IpAddr, ScrcpySuperviseStopTx>>>,
+}
+
 impl ApiResponse {
     fn new(ok: bool, message: impl Into<String>) -> Self {
         Self {
             ok,
             message: message.into(),
+        }
+    }
+}
+
+impl AppState {
+    fn register_scrcpy_supervisor(&self, ip: IpAddr, stop_tx: ScrcpySuperviseStopTx) {
+        let previous = {
+            let mut guard = self.scrcpy_supervisors.lock().unwrap();
+            guard.insert(ip, stop_tx)
+        };
+
+        if let Some(previous) = previous {
+            let _ = previous.send(());
+            info!(?ip, "replaced existing scrcpy supervise");
+        } else {
+            info!(?ip, "registered scrcpy supervise");
+        }
+    }
+
+    fn stop_scrcpy_supervisor_for_target(&self, target: &str) {
+        let Some(ip) = connection_ip_from_target(target) else {
+            info!(
+                target = %target,
+                "adb disconnect target is not an ip address, skip scrcpy supervise stop"
+            );
+            return;
+        };
+
+        let stop_tx = {
+            let mut guard = self.scrcpy_supervisors.lock().unwrap();
+            guard.remove(&ip)
+        };
+
+        if let Some(stop_tx) = stop_tx {
+            let _ = stop_tx.send(());
+            info!(?ip, "stopped scrcpy supervise");
         }
     }
 }
@@ -77,9 +122,11 @@ async fn handler_adb_connect(
 }
 
 async fn handler_adb_disconnect(
+    State(state): State<AppState>,
     Json(AdbDisconnectArgs { target }): Json<AdbDisconnectArgs>,
 ) -> (StatusCode, Json<ApiResponse>) {
     info!("req: adb disconnect {target}");
+    state.stop_scrcpy_supervisor_for_target(&target);
     if let Err(e) = adb_disconnect(&target).await {
         warn!(e, "adb disconnect failed");
         return (StatusCode::OK, Json(ApiResponse::new(false, e)));
@@ -88,12 +135,19 @@ async fn handler_adb_disconnect(
 }
 
 async fn handler_scrcpy_launch(
+    State(state): State<AppState>,
     Json(ScrcpyLaunchArgs { mode }): Json<ScrcpyLaunchArgs>,
 ) -> (StatusCode, Json<ApiResponse>) {
     info!("req: scrcpy launch ({mode:?})");
-    if let Err(e) = scrcpy_launch(mode).await {
-        warn!(e, "scrcpy launch failed");
-        return (StatusCode::OK, Json(ApiResponse::new(false, e)));
+    match scrcpy_launch(mode).await {
+        Ok(Some((ip, stop_tx))) => {
+            state.register_scrcpy_supervisor(ip, stop_tx);
+        }
+        Ok(None) => {}
+        Err(e) => {
+            warn!(e, "scrcpy launch failed");
+            return (StatusCode::OK, Json(ApiResponse::new(false, e)));
+        }
     }
     (StatusCode::OK, Json(ApiResponse::new(true, "launched")))
 }
@@ -123,11 +177,13 @@ async fn main() -> anyhow::Result<()> {
     .unwrap();
 
     info!("bind on port: {}", args.port);
+    let state = AppState::default();
     let app = Router::new()
         .route("/adb/connect", post(handler_adb_connect))
         .route("/adb/disconnect", post(handler_adb_disconnect))
         .route("/adb/pair", post(handler_adb_pair))
-        .route("/scrcpy/launch", post(handler_scrcpy_launch));
+        .route("/scrcpy/launch", post(handler_scrcpy_launch))
+        .with_state(state);
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
