@@ -10,7 +10,9 @@ use tokio::{process::Command, sync::oneshot, task::JoinHandle};
 use tracing::{info, warn};
 
 const SCRCPY_STARTUP_TIMEOUT: Duration = Duration::from_secs(1);
-const SCRCPY_RETRY_INTERVAL: Duration = Duration::from_secs(2);
+const SCRCPY_INITIAL_RETRY_INTERVAL: Duration = Duration::from_secs(2);
+const SCRCPY_MAX_RETRY_INTERVAL: Duration = Duration::from_secs(30);
+const SCRCPY_MAX_RETRY_ATTEMPTS: u32 = 6;
 const SCRCPY_DEVICE_DISCONNECTED_EXIT_CODE: i32 = 2;
 
 pub type ScrcpySuperviseStopTx = oneshot::Sender<()>;
@@ -170,14 +172,24 @@ async fn wait_scrcpy_startup_or_stop(
     }
 }
 
-async fn wait_retry_interval_or_stop(stop_rx: Option<&mut oneshot::Receiver<()>>) -> bool {
+fn reconnect_retry_delay(attempt: u32) -> Duration {
+    let multiplier = 2u32.saturating_pow(attempt.saturating_sub(1));
+    SCRCPY_INITIAL_RETRY_INTERVAL
+        .saturating_mul(multiplier)
+        .min(SCRCPY_MAX_RETRY_INTERVAL)
+}
+
+async fn wait_reconnect_retry_delay_or_stop(
+    stop_rx: Option<&mut oneshot::Receiver<()>>,
+    retry_delay: Duration,
+) -> bool {
     if let Some(stop_rx) = stop_rx {
         tokio::select! {
             _ = stop_rx => false,
-            _ = tokio::time::sleep(SCRCPY_RETRY_INTERVAL) => true,
+            _ = tokio::time::sleep(retry_delay) => true,
         }
     } else {
-        tokio::time::sleep(SCRCPY_RETRY_INTERVAL).await;
+        tokio::time::sleep(retry_delay).await;
         true
     }
 }
@@ -215,16 +227,33 @@ async fn supervise_scrcpy(
         }
 
         warn!(?mode, "scrcpy disconnected, starting reconnect loop");
-        loop {
-            if !wait_retry_interval_or_stop(stop_rx.as_mut()).await {
+        let mut reconnected = false;
+        for attempt in 1..=SCRCPY_MAX_RETRY_ATTEMPTS {
+            let retry_delay = reconnect_retry_delay(attempt);
+            if !wait_reconnect_retry_delay_or_stop(stop_rx.as_mut(), retry_delay).await {
                 info!(?mode, "scrcpy supervise canceled before reconnect");
                 return;
             }
-            info!(?mode, "retrying scrcpy reconnect");
+            info!(
+                ?mode,
+                attempt,
+                max_attempts = SCRCPY_MAX_RETRY_ATTEMPTS,
+                retry_delay_secs = retry_delay.as_secs(),
+                "retrying scrcpy reconnect"
+            );
             handle = match spawn_scrcpy(mode.clone(), true) {
                 Ok(handle) => handle,
                 Err(e) => {
-                    warn!(e, ?mode, "failed to prepare scrcpy reconnect");
+                    if attempt == SCRCPY_MAX_RETRY_ATTEMPTS {
+                        warn!(
+                            e,
+                            ?mode,
+                            attempts = SCRCPY_MAX_RETRY_ATTEMPTS,
+                            "scrcpy reconnect attempts exhausted while preparing relaunch"
+                        );
+                        return;
+                    }
+                    warn!(e, ?mode, attempt, "failed to prepare scrcpy reconnect");
                     continue;
                 }
             };
@@ -235,7 +264,8 @@ async fn supervise_scrcpy(
                     return;
                 }
                 Ok(ScrcpyStartupResult::Started) => {
-                    info!(?mode, "scrcpy reconnected");
+                    info!(?mode, attempt, "scrcpy reconnected");
+                    reconnected = true;
                     break;
                 }
                 Ok(ScrcpyStartupResult::Exited(output)) => {
@@ -244,25 +274,52 @@ async fn supervise_scrcpy(
                         return;
                     }
 
+                    if attempt == SCRCPY_MAX_RETRY_ATTEMPTS {
+                        warn!(
+                            error = format_scrcpy_failure(&output),
+                            ?mode,
+                            attempts = SCRCPY_MAX_RETRY_ATTEMPTS,
+                            "scrcpy reconnect attempts exhausted"
+                        );
+                        return;
+                    }
+
                     warn!(
                         error = format_scrcpy_failure(&output),
                         ?mode,
+                        attempt,
                         "scrcpy reconnect attempt failed"
                     );
                 }
                 Err(e) => {
-                    warn!(e, ?mode, "failed to relaunch scrcpy");
+                    if attempt == SCRCPY_MAX_RETRY_ATTEMPTS {
+                        warn!(
+                            e,
+                            ?mode,
+                            attempts = SCRCPY_MAX_RETRY_ATTEMPTS,
+                            "scrcpy reconnect attempts exhausted while relaunching"
+                        );
+                        return;
+                    }
+                    warn!(e, ?mode, attempt, "failed to relaunch scrcpy");
                 }
             }
+        }
+
+        if !reconnected {
+            return;
         }
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4};
+    use std::{
+        net::{IpAddr, Ipv4Addr, SocketAddr, SocketAddrV4},
+        time::Duration,
+    };
 
-    use super::{ScrcpyLaunchMode, connection_ip_from_target};
+    use super::{ScrcpyLaunchMode, connection_ip_from_target, reconnect_retry_delay};
 
     #[test]
     fn tcpip_connect_retry_uses_forced_reconnect_arg() {
@@ -316,5 +373,15 @@ mod tests {
             mode.connection_ip(),
             Some(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 20)))
         );
+    }
+
+    #[test]
+    fn reconnect_retry_delay_grows_exponentially_and_caps() {
+        assert_eq!(reconnect_retry_delay(1), Duration::from_secs(2));
+        assert_eq!(reconnect_retry_delay(2), Duration::from_secs(4));
+        assert_eq!(reconnect_retry_delay(3), Duration::from_secs(8));
+        assert_eq!(reconnect_retry_delay(4), Duration::from_secs(16));
+        assert_eq!(reconnect_retry_delay(5), Duration::from_secs(30));
+        assert_eq!(reconnect_retry_delay(6), Duration::from_secs(30));
     }
 }
