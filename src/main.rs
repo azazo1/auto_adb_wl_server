@@ -18,7 +18,7 @@ use tracing::{error, info, warn};
 #[derive(clap::Parser, Debug)]
 #[clap(author, version, about, long_about = None)]
 struct AppArgs {
-    #[clap(short, long, default_value_t = 21300)]
+    #[clap(short, long, default_value_t = 0)]
     port: u16,
 }
 
@@ -164,7 +164,7 @@ async fn main() -> anyhow::Result<()> {
 
     let args = AppArgs::parse();
     let listener = TcpListener::bind(format!("0.0.0.0:{}", args.port)).await?;
-    let mut mdns = MDnsService::register(args.port).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mut mdns = MDnsService::register(listener.local_addr()?.port()).map_err(|e| anyhow::anyhow!("{e}"))?;
     info!("mdns service started: {}", mdns.fullname());
 
     let _handle = netwatcher::watch_interfaces(move |_update| {
@@ -176,7 +176,7 @@ async fn main() -> anyhow::Result<()> {
     })
     .unwrap();
 
-    info!("bind on port: {}", args.port);
+    info!("bind on port: {}", listener.local_addr()?.port());
     let state = AppState::default();
     let app = Router::new()
         .route("/adb/connect", post(handler_adb_connect))
