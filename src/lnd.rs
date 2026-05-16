@@ -3,7 +3,7 @@ use std::path::PathBuf;
 use ::lnd::{AnnounceHandle, AnnounceSpec, LndClient};
 use tracing::info;
 
-pub const LND_SERVICE_NAME: &str = "_auto-adb-wl._tcp";
+pub const LND_SERVICE_NAME: &str = "AutoADB._http._tcp";
 pub const DEFAULT_LND_DISPLAY_NAME: &str = "Auto ADB";
 const DEFAULT_LND_TTL_SECS: u64 = 30;
 
