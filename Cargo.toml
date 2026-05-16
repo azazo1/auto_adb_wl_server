@@ -2,6 +2,7 @@
 name = "auto_adb_wl_server"
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
 
 [[bin]]
 name = "auto_adb_wl_server"
@@ -19,3 +20,6 @@ axum = { version = "0.8.8", features = ["json"] }
 clap = { version = "4.5.60", features = ["derive"] }
 serde = { version = "1.0.228", features = ["derive"] }
 netwatcher = "0.4.1"
+dirs = "6.0.0"
+uuid = { version = "1.17.0", features = ["v4"] }
+lnd = { git = "https://github.com/azazo1/lnd.git", rev = "99bcdaa4b719513fadc888f6418f9ee471373e9a" }

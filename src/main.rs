@@ -6,6 +6,7 @@ use std::{
 
 use auto_adb_wl_server::{
     adb::{adb_connect, adb_disconnect, adb_pair},
+    lnd::LndAnnounceService,
     mdns::MDnsService,
     scrcpy::{ScrcpyLaunchMode, ScrcpySuperviseStopTx, connection_ip_from_target, scrcpy_launch},
 };
@@ -160,12 +161,22 @@ async fn shutdown_signal() {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt().init();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| "info".into()),
+        )
+        .init();
 
     let args = AppArgs::parse();
     let listener = TcpListener::bind(format!("0.0.0.0:{}", args.port)).await?;
     let mut mdns = MDnsService::register(listener.local_addr()?.port()).map_err(|e| anyhow::anyhow!("{e}"))?;
     info!("mdns service started: {}", mdns.fullname());
+    let mut lnd_announce = LndAnnounceService::start(args.port)
+        .await
+        .map_err(|e| anyhow::anyhow!("{e}"))?;
+    if let Some(service) = lnd_announce.as_ref() {
+        info!("lnd announce started: {}", service.node_id());
+    }
 
     let _handle = netwatcher::watch_interfaces(move |_update| {
         if let Err(e) = mdns.restart() {
@@ -184,9 +195,13 @@ async fn main() -> anyhow::Result<()> {
         .route("/adb/pair", post(handler_adb_pair))
         .route("/scrcpy/launch", post(handler_scrcpy_launch))
         .with_state(state);
-    axum::serve(listener, app)
+    let serve_result = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
-        .await?;
+        .await;
+    if let Some(service) = lnd_announce.as_mut() {
+        service.stop().await.map_err(|e| anyhow::anyhow!("{e}"))?;
+    }
+    serve_result?;
     info!("shutdown");
     Ok(())
 }
