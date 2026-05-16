@@ -1045,7 +1045,7 @@ checksum = "92daf443525c4cce67b150400bc2316076100ce0b3686209eb8cf3c31612e6f0"
 [[package]]
 name = "lnd"
 version = "0.1.0"
-source = "git+https://github.com/azazo1/lnd.git?rev=1ff776c1695aff29835b5c5343af3ad734c09d20#1ff776c1695aff29835b5c5343af3ad734c09d20"
+source = "git+https://github.com/azazo1/lnd.git?rev=c87b48c0dc64c2f1f14bb7d8da009962e21a4007#c87b48c0dc64c2f1f14bb7d8da009962e21a4007"
 dependencies = [
  "anyhow",
  "async-stream",
