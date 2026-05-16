@@ -169,9 +169,10 @@ async fn main() -> anyhow::Result<()> {
 
     let args = AppArgs::parse();
     let listener = TcpListener::bind(format!("0.0.0.0:{}", args.port)).await?;
-    let mut mdns = MDnsService::register(listener.local_addr()?.port()).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let listen_port = listener.local_addr()?.port();
+    let mut mdns = MDnsService::register(listen_port).map_err(|e| anyhow::anyhow!("{e}"))?;
     info!("mdns service started: {}", mdns.fullname());
-    let mut lnd_announce = LndAnnounceService::start(args.port)
+    let mut lnd_announce = LndAnnounceService::start(listen_port)
         .await
         .map_err(|e| anyhow::anyhow!("{e}"))?;
     if let Some(service) = lnd_announce.as_ref() {
@@ -187,7 +188,7 @@ async fn main() -> anyhow::Result<()> {
     })
     .unwrap();
 
-    info!("bind on port: {}", listener.local_addr()?.port());
+    info!("bind on port: {}", listen_port);
     let state = AppState::default();
     let app = Router::new()
         .route("/adb/connect", post(handler_adb_connect))

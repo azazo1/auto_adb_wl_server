@@ -22,4 +22,4 @@ serde = { version = "1.0.228", features = ["derive"] }
 netwatcher = "0.4.1"
 dirs = "6.0.0"
 uuid = { version = "1.17.0", features = ["v4"] }
-lnd = { git = "https://github.com/azazo1/lnd.git", rev = "99bcdaa4b719513fadc888f6418f9ee471373e9a" }
+lnd = { git = "https://github.com/azazo1/lnd.git", rev = "15ec9c004dc1c69a915488949b6b9bfe80a8bada" }

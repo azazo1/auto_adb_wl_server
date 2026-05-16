@@ -63,4 +63,4 @@ cargo install --path .
 
 - `lnd` 依赖来源是 GitHub 仓库: [azazo1/lnd](https://github.com/azazo1/lnd)
 - `lnd` 的 `node_id` 会自动持久化到系统状态目录
-- `lnd` 的 `network_id` 会在启动时自动推导
+- `lnd` 会在启动时自动解析本机 announce 地址和 `reachability_scopes`

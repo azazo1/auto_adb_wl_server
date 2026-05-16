@@ -3,14 +3,14 @@ use std::path::PathBuf;
 use ::lnd::{AnnounceHandle, AnnounceSpec, LndClient};
 use tracing::info;
 
-pub const LND_SERVICE_NAME: &str = "AutoADB._http._tcp";
+pub const LND_SERVICE_TYPE: &str = "_http._tcp";
+pub const LND_DISCOVERY_DOMAIN: &str = "auto-adb";
 pub const DEFAULT_LND_DISPLAY_NAME: &str = "Auto ADB";
 const DEFAULT_LND_TTL_SECS: u64 = 30;
 
 pub struct LndAnnounceService {
     handle: Option<AnnounceHandle>,
     node_id: String,
-    network_id: Option<String>,
     base_url: String,
 }
 
@@ -24,11 +24,8 @@ impl LndAnnounceService {
             .bearer_token(compiled_lnd_bearer_token().to_string())
             .build()
             .map_err(|error| format!("failed to build lnd client: {error}"))?;
-        let network_id = client
-            .resolve_network_id()
-            .map_err(|error| format!("failed to derive lnd network_id: {error}"))?;
         let node_id = resolve_node_id().await?;
-        let spec = build_announce_spec(node_id.clone(), network_id.clone(), port);
+        let spec = build_announce_spec(node_id.clone(), port);
 
         let lan_addrs = client
             .resolve_announce_addrs(&spec)
@@ -43,7 +40,7 @@ impl LndAnnounceService {
             .resolve_reachability_scopes(&spec)
             .map_err(|error| format!("failed to resolve lnd reachability scopes: {error}"))?;
         let mut announcement = spec.clone().into_announcement(lan_addrs);
-        announcement.reachability_scopes = reachability_scopes;
+        announcement.reachability_scopes = reachability_scopes.clone();
         client
             .announce_once(announcement)
             .await
@@ -53,17 +50,17 @@ impl LndAnnounceService {
             .map_err(|error| format!("failed to start lnd announce loop: {error}"))?;
 
         info!(
-            service = LND_SERVICE_NAME,
+            service = LND_SERVICE_TYPE,
+            discovery_domain = LND_DISCOVERY_DOMAIN,
             %base_url,
             %node_id,
-            network_id = %network_id,
+            reachability_scopes = ?reachability_scopes,
             "lnd announce started"
         );
 
         Ok(Some(Self {
             handle: Some(handle),
             node_id,
-            network_id: Some(network_id),
             base_url: base_url.to_string(),
         }))
     }
@@ -77,10 +74,10 @@ impl LndAnnounceService {
             .await
             .map_err(|error| format!("failed to stop lnd announce loop: {error}"))?;
         info!(
-            service = LND_SERVICE_NAME,
+            service = LND_SERVICE_TYPE,
+            discovery_domain = LND_DISCOVERY_DOMAIN,
             base_url = %self.base_url,
             node_id = %self.node_id,
-            network_id = ?self.network_id,
             "lnd announce stopped"
         );
         Ok(())
@@ -138,27 +135,27 @@ fn compiled_lnd_bearer_token() -> &'static str {
         .unwrap_or("")
 }
 
-fn build_announce_spec(node_id: String, network_id: String, port: u16) -> AnnounceSpec {
-    AnnounceSpec::new(node_id, LND_SERVICE_NAME, DEFAULT_LND_DISPLAY_NAME, port)
+fn build_announce_spec(node_id: String, port: u16) -> AnnounceSpec {
+    AnnounceSpec::new(node_id, LND_SERVICE_TYPE, DEFAULT_LND_DISPLAY_NAME, port)
         .with_ttl_secs(DEFAULT_LND_TTL_SECS)
         .insert_metadata("app", env!("CARGO_PKG_NAME"))
         .insert_metadata("version", env!("CARGO_PKG_VERSION"))
-        .with_network_id(network_id)
+        .with_discovery_domain(LND_DISCOVERY_DOMAIN)
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        DEFAULT_LND_DISPLAY_NAME, DEFAULT_LND_TTL_SECS, LND_SERVICE_NAME, build_announce_spec,
+        DEFAULT_LND_DISPLAY_NAME, DEFAULT_LND_TTL_SECS, LND_SERVICE_TYPE, build_announce_spec,
     };
 
     #[test]
     fn build_announce_spec_applies_defaults() {
-        let spec = build_announce_spec("node-a".to_string(), "net-a".to_string(), 21300);
+        let spec = build_announce_spec("node-a".to_string(), 21300);
 
         assert_eq!(spec.node_id, "node-a");
-        assert_eq!(spec.network_id.as_deref(), Some("net-a"));
-        assert_eq!(spec.service, LND_SERVICE_NAME);
+        assert!(spec.discovery_domain.is_none());
+        assert_eq!(spec.service, LND_SERVICE_TYPE);
         assert_eq!(spec.display_name, DEFAULT_LND_DISPLAY_NAME);
         assert_eq!(spec.port, 21300);
         assert_eq!(spec.ttl_secs, DEFAULT_LND_TTL_SECS);
@@ -171,6 +168,8 @@ mod tests {
             spec.metadata.get("version").map(String::as_str),
             Some(env!("CARGO_PKG_VERSION"))
         );
+        assert!(spec.auto_lan_addrs);
+        assert!(spec.auto_reachability_scopes);
         assert!(spec.address_selection.is_none());
     }
 }
