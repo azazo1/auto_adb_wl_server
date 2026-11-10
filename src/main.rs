@@ -8,6 +8,7 @@ use auto_adb_wl_server::{
     adb::{adb_connect, adb_disconnect, adb_pair},
     lnd::LndAnnounceService,
     mdns::MDnsService,
+    network::NetworkMonitor,
     scrcpy::{ScrcpyLaunchMode, ScrcpySuperviseStopTx, connection_ip_from_target, scrcpy_launch},
 };
 use axum::{Json, Router, extract::State, http::StatusCode, routing::post};
@@ -170,7 +171,7 @@ async fn main() -> anyhow::Result<()> {
     let args = AppArgs::parse();
     let listener = TcpListener::bind(format!("0.0.0.0:{}", args.port)).await?;
     let listen_port = listener.local_addr()?.port();
-    let mut mdns = MDnsService::register(listen_port).map_err(|e| anyhow::anyhow!("{e}"))?;
+    let mdns = MDnsService::register(listen_port).map_err(|e| anyhow::anyhow!("{e}"))?;
     info!("mdns service started: {}", mdns.fullname());
     let mut lnd_announce = LndAnnounceService::start(listen_port)
         .await
@@ -179,14 +180,8 @@ async fn main() -> anyhow::Result<()> {
         info!("lnd announce started: {}", service.node_id());
     }
 
-    let _handle = netwatcher::watch_interfaces(move |_update| {
-        if let Err(e) = mdns.restart() {
-            warn!(e);
-        } else {
-            info!("mdns service restarted: {}", mdns.fullname());
-        }
-    })
-    .unwrap();
+    let network_monitor = NetworkMonitor::start(mdns)
+        .map_err(|e| anyhow::anyhow!("无法启动网络变化监听: {e}"))?;
 
     info!("bind on port: {}", listen_port);
     let state = AppState::default();
@@ -199,6 +194,7 @@ async fn main() -> anyhow::Result<()> {
     let serve_result = axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await;
+    network_monitor.stop().await;
     if let Some(service) = lnd_announce.as_mut() {
         service.stop().await.map_err(|e| anyhow::anyhow!("{e}"))?;
     }

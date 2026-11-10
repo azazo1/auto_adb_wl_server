@@ -23,3 +23,6 @@ netwatcher = "0.4.1"
 dirs = "6.0.0"
 uuid = { version = "1.17.0", features = ["v4"] }
 lnd = { git = "https://github.com/azazo1/lnd.git", rev = "c87b48c0dc64c2f1f14bb7d8da009962e21a4007" }
+
+[dev-dependencies]
+tokio = { version = "1.47.1", features = ["test-util"] }

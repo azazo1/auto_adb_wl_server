@@ -1,6 +1,10 @@
-use std::{ffi::OsStr, net::SocketAddr};
+use std::{ffi::OsStr, future::Future, net::SocketAddr, time::Duration};
 
-use tokio::process::Command;
+use tokio::{process::Command, sync::RwLock};
+
+// 普通请求可以并发, 重启期间独占 server, 避免在 kill/start 之间插入命令.
+static ADB_SERVER_LOCK: RwLock<()> = RwLock::const_new(());
+const ADB_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// 使用指定的参数调用 adb
 ///
@@ -12,8 +16,11 @@ use tokio::process::Command;
 async fn call_adb(args: &[impl AsRef<OsStr>]) -> Result<String, String> {
     let adb = which::which("adb").map_err(|_| "adb not found")?;
     let mut cmd = Command::new(&adb);
-    cmd.args(args);
-    let output = cmd.output().await.map_err(|_| "failed to launch adb")?;
+    cmd.args(args).kill_on_drop(true);
+    let output = tokio::time::timeout(ADB_COMMAND_TIMEOUT, cmd.output())
+        .await
+        .map_err(|_| "adb 命令执行超时".to_string())?
+        .map_err(|e| format!("failed to launch adb: {e}"))?;
     if !output.status.success() {
         Err(format!(
             "adb returned error code: {:?}\n{}",
@@ -24,7 +31,26 @@ async fn call_adb(args: &[impl AsRef<OsStr>]) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).into())
 }
 
+pub async fn adb_restart_server() -> Result<(), String> {
+    let _guard = ADB_SERVER_LOCK.write().await;
+    restart_server_with(|command| async move { call_adb(&[command]).await.map(|_| ()) }).await
+}
+
+async fn restart_server_with<F, Fut>(mut run: F) -> Result<(), String>
+where
+    F: FnMut(&'static str) -> Fut,
+    Fut: Future<Output = Result<(), String>>,
+{
+    for command in ["kill-server", "start-server"] {
+        run(command)
+            .await
+            .map_err(|e| format!("adb {command}: {e}"))?;
+    }
+    Ok(())
+}
+
 pub async fn adb_connect(address: SocketAddr) -> Result<(), String> {
+    let _guard = ADB_SERVER_LOCK.read().await;
     let target = address.to_string();
     let output = call_adb(&["connect", &target]).await?;
     validate_connect_output(&target, &output)
@@ -45,18 +71,44 @@ fn validate_connect_output(target: &str, output: &str) -> Result<(), String> {
 }
 
 pub async fn adb_pair(address: SocketAddr, pair_code: String) -> Result<(), String> {
+    let _guard = ADB_SERVER_LOCK.read().await;
     call_adb(&["pair", &address.to_string(), &pair_code]).await?;
     Ok(())
 }
 
 pub async fn adb_disconnect(target: &str) -> Result<(), String> {
+    let _guard = ADB_SERVER_LOCK.read().await;
     call_adb(&["disconnect", target]).await?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
-    use super::validate_connect_output;
+    use super::{restart_server_with, validate_connect_output};
+
+    #[tokio::test]
+    async fn restart_runs_kill_before_start_and_propagates_failures() {
+        for failed_command in [None, Some("kill-server"), Some("start-server")] {
+            let mut commands = Vec::new();
+            let result = restart_server_with(|command| {
+                commands.push(command);
+                std::future::ready(if failed_command == Some(command) {
+                    Err("模拟命令失败".to_string())
+                } else {
+                    Ok(())
+                })
+            })
+            .await;
+
+            assert_eq!(result.is_ok(), failed_command.is_none());
+            let expected = if failed_command == Some("kill-server") {
+                vec!["kill-server"]
+            } else {
+                vec!["kill-server", "start-server"]
+            };
+            assert_eq!(commands, expected);
+        }
+    }
 
     #[test]
     fn connect_accepts_only_success_for_requested_target() {
